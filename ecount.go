@@ -8,27 +8,28 @@ import (
 type Ecount interface{
     Incr(string)
     Stop()
+    Evicted() chan map[string]int
 }
 
 type ecount struct {
   eventCntMap     map[string]int
   eventC          chan string
+  evictC          chan map[string]int
   stopC           chan bool
   stopEvictC      chan bool
   mu              sync.RWMutex
   wg              sync.WaitGroup
   evictionTime    time.Duration
-  beforeEvictHook func(map[string]int)
 }
 
-func New(evictionTime time.Duration, beforeEvictHook func(map[string]int)) Ecount {
+func New(evictionTime time.Duration) Ecount {
   ec := &ecount{
     eventCntMap: map[string]int{},
     eventC: make(chan string, 1000),
+    evictC: make(chan map[string]int, 1000),
     stopC: make(chan bool),
     stopEvictC: make(chan bool),
     evictionTime: evictionTime,
-    beforeEvictHook: beforeEvictHook,
   }
   go ec.startEventListener()
   ec.wg.Add(1)
@@ -50,15 +51,11 @@ func(self *ecount) onEvent(event string) {
 
 
 func(self *ecount) startEventListener() {
-  for {
-		select {
-		case event := <-self.eventC:
-			self.onEvent(event)
-		case <-self.stopC:
-			self.wg.Done()
-			return
-		}
-	}
+  for event := range self.eventC {
+    self.onEvent(event)
+  }
+
+  self.wg.Done()
 }
 
 func(self *ecount) startEvictor() {
@@ -79,7 +76,7 @@ func(self *ecount) evict() {
   self.mu.Lock()
   defer self.mu.Unlock()
 
-  self.beforeEvictHook(self.eventCntMap)
+  self.evictC <- self.eventCntMap
   self.eventCntMap = map[string]int{}
 }
 
@@ -88,8 +85,13 @@ func(self *ecount) Incr(event string) {
 }
 
 func(self *ecount) Stop() {
-  self.stopC <- true
+  close(self.eventC)
   self.stopEvictC <- true
   self.wg.Wait()
   self.evict()
+  close(self.evictC)
+}
+
+func(self *ecount) Evicted() chan map[string]int {
+  return self.evictC
 }

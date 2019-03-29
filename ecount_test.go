@@ -4,24 +4,34 @@ import (
   "log"
   "time"
   "testing"
+  "sync"
 )
 
 func TestEventCounter(*testing.T) {
-  ec := New(time.Second * 1, func(eventCtrMap map[string]int) {
-    log.Println("got map : ", eventCtrMap)
-  })
+  ec := New(time.Second * 1)
+  var wg sync.WaitGroup
+  wg.Add(1)
+  go func(){
+      for m := range ec.Evicted() {
+        log.Println("got evicted: ", m)
+      }
+      wg.Done()
+  }()
 
-  for i:=0; i< 10000; i++ {
+  log.Println("started incrementing")
+  for i:=0; i< 10000001; i++ {
     ec.Incr("one")
   }
 
-  ec.Incr("two")
-  ec.Incr("two")
+  for i:=0; i< 10000002; i++ {
+    ec.Incr("two")
+  }
 
-  ec.Incr("three")
-  ec.Incr("three")
-  ec.Incr("three")
+  for i:=0; i< 10000003; i++ {
+    ec.Incr("three")
+  }
 
-  time.Sleep(time.Second * 3)
+  log.Println("called stop")
   ec.Stop()
+  wg.Wait()
 }
